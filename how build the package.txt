@@ -1,0 +1,3 @@
+https://setuptools.readthedocs.io/en/latest/setuptools.html#distributing-a-setuptools-based-project
+
+python setup.py sdist bdist_wheel
