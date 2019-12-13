@@ -11,14 +11,15 @@ from silx.image import sift
 from scipy.ndimage.interpolation import shift
 from skimage.transform import downscale_local_mean
 import amst.pyelastix_amst as pyelastix
-
+from skimage.feature import register_translation
+from skimage.transform import rescale
+from skimage import filters
 
 # To check which device the SIFT runs on
 print('Running SIFT on ' + sift.SiftPlan(shape=(10, 10)).ctx.devices[0].name)
 
 
 def default_elastix_params():
-
     return dict(
         # These are copied from the default affine parameter file:
         # http://elastix.bigr.nl/wiki/images/c/c5/Parameters_Affine.txt
@@ -82,7 +83,7 @@ def default_elastix_params():
         # Number of grey level bins in each resolution level,
         # for the mutual information. 16 or 32 usually works fine.
         # You could also employ a hierarchical strategy:
-        #(NumberOfHistogramBins 16 32 64)
+        # (NumberOfHistogramBins 16 32 64)
         NumberOfHistogramBins=32,
 
         # If you use a mask, this option is important.
@@ -102,11 +103,11 @@ def default_elastix_params():
         # By default, the images are downsampled by a factor of 2
         # compared to the next resolution.
         # So, in 2D, with 4 resolutions, the following schedule is used:
-        #(ImagePyramidSchedule 8 8  4 4  2 2  1 1 )
+        # (ImagePyramidSchedule 8 8  4 4  2 2  1 1 )
         # And in 3D:
-        #(ImagePyramidSchedule 8 8 8  4 4 4  2 2 2  1 1 1 )
+        # (ImagePyramidSchedule 8 8 8  4 4 4  2 2 2  1 1 1 )
         # You can specify any schedule, for example:
-        #(ImagePyramidSchedule 4 4  4 3  2 1  1 1 )
+        # (ImagePyramidSchedule 4 4  4 3  2 1  1 1 )
         # Make sure that the number of elements equals the number
         # of resolutions times the image dimension.
 
@@ -121,7 +122,7 @@ def default_elastix_params():
         # which usually works well. In case of unusual high-resolution images
         # (eg histology) it is necessary to increase this value a bit, to the size
         # of the "smallest visible structure" in the image:
-        #(MaximumStepLength 1.0)
+        # (MaximumStepLength 1.0)
 
         # **************** Image sampling **********************
 
@@ -166,6 +167,7 @@ def default_elastix_params():
         # The pixel type and format of the resulting deformed moving image
         ResultImagePixelType="short",
         ResultImageFormat="mhd",
+
     )
 
 
@@ -203,23 +205,32 @@ def optimized_elastix_params():
 
 
 def default_amst_params():
-
     return dict(
-        median_radius=7,         # radius of the median smoothing surrounding
+        median_radius=7,  # radius of the median smoothing surrounding
         elastix_params=optimized_elastix_params(),
-        sift_pre_align=True,     # Use SIFT to get the raw data close to the template
-        sift_sigma=1.6,          # Pre-smooth data before running the SIFT
+        coarse_alignment='SIFT',
+        # Use SIFT to get the raw data close to the template, XCORR for cross-correlation and None for no coarse alignment
+        sift_sigma=1.6,  # Pre-smooth data before running the SIFT
         sift_downsample=(2, 2),  # Downsample the data for the SIFT (for speed-up, downsampling by 2 should not
-                                 #     compromize the final result
-        n_workers=8,             # Number of CPU cores allocated
-        n_workers_sift=1,        # Number of threads for the SIFT step (must be 1 if run on the GPU)
-        sift_devicetype='GPU',   # Run the SIFT on GPU or CPU
+        #     compromize the final result
+        n_workers=8,  # Number of CPU cores allocated
+        n_workers_sift=1,  # Number of threads for the SIFT step (must be 1 if run on the GPU)
+        sift_devicetype='GPU',  # Run the SIFT on GPU or CPU
         compute_range=np.s_[:],  # Select a subset of the data for alignment (good for parameter testing)
-        verbose=False,           # Set to True for a more detailed console output
+        verbose=False,  # Set to True for a more detailed console output
         write_intermediates=False  # Set to True to also write the median smoothed template and the results of the SIFT
-                                 # step to disk; two folders will be created within the specified target directory that
-                                 # contain this data ('refs' and 'sift')
+        # step to disk; two folders will be created within the specified target directory that
+        # contain this data ('refs' and 'sift')
     )
+
+
+def xcorr(offset_image, image):
+    image = gaussianSmoothing(image, 1)
+    offset_image = gaussianSmoothing(offset_image, 1)
+    image = filters.sobel(image)
+    offset_image = filters.sobel(offset_image)
+    shift, error, diffphase = register_translation(image, offset_image, 100)
+    return (shift[1], shift[0])
 
 
 def pre_processing_generator(
@@ -233,7 +244,6 @@ def pre_processing_generator(
         target_folder=None,
         verbose=False
 ):
-
     # __________________________________________________________________________________________________________________
     # Helper functions
 
@@ -246,7 +256,7 @@ def pre_processing_generator(
         bottom_right = true_points.max(axis=0)
         # generate bounds
         bounds = np.s_[top_left[0]:bottom_right[0] + 1,  # plus 1 because slice isn't
-                       top_left[1]:bottom_right[1] + 1]  # inclusive
+                 top_left[1]:bottom_right[1] + 1]  # inclusive
         return bounds
 
     def _prepare_data(idx, batch_idx):
@@ -285,7 +295,7 @@ def pre_processing_generator(
                     template_data[load_idx] = imread(im_list_pre[slice_idx])
                     assert template_data[load_idx].dtype == 'uint8', 'Only 8bit template data is supported!'
             # else:
-                #     print('Template data is not None')
+            #     print('Template data is not None')
             # else:
             #     print('slice_idx < 0')
 
@@ -345,8 +355,10 @@ def pre_processing_generator(
     # Main loop which yields the batches of data
 
     # Assert that the input folders actually exist
-    assert os.path.exists(raw_folder), 'The raw folder does not exist. \nEnsure the raw_folder input points to the correct location.'
-    assert os.path.exists(pre_alignment_folder), 'The folder for the pre-alignment does not exist. \nEnsure the pre_alignment_folder input points to the correct location.'
+    assert os.path.exists(
+        raw_folder), 'The raw folder does not exist. \nEnsure the raw_folder input points to the correct location.'
+    assert os.path.exists(
+        pre_alignment_folder), 'The folder for the pre-alignment does not exist. \nEnsure the pre_alignment_folder input points to the correct location.'
 
     # Find the tif files in the respective directories for the raw data and the pre-alignment
     im_list_raw = np.sort(glob(os.path.join(raw_folder, '*.tif')))[compute_range]
@@ -364,7 +376,6 @@ def pre_processing_generator(
     for batch_idx in range(0, len(im_list_raw), n_workers):
 
         print('batch_idx = {}'.format(batch_idx))
-
         # --------------------------------------------------------------------------------------------------------------
         # Generate the median smoothed template
         if verbose:
@@ -413,8 +424,26 @@ def pre_processing_generator(
         yield templates_med, templates_med_smooth, raw_crop, raw_crop_smooth, names
 
 
-def _sift_on_pair(fixed, moving, devicetype, verbose=False):
+def _xcorr_on_pair(fixed, moving, devicetype, verbose=False):
+    h, w = fixed.shape
+    h2, w2 = moving.shape
+    if w != w2:
+        print('Images with different widths!!')
+        return (0., 0.)
+    if (w > 4096):
+        # perform resizing to speed up
+        img = rescale(fixed, 0.5)
+        img2 = rescale(moving, 0.5)
+        shift = xcorr(img, img2)
+        offset = (shift[0] * 2, shift[1] * 2)
+    else:
+        offset = xcorr(fixed, moving)
+    if verbose:
+        print('offset = {}'.format(offset))
+    return offset
 
+
+def _sift_on_pair(fixed, moving, devicetype, verbose=False):
     # Initialize the SIFT
     sift_ocl = sift.SiftPlan(template=fixed, devicetype=devicetype)
     # print("Device used for calculation: ", sift_ocl.ctx.devices[0].name)
@@ -432,7 +461,7 @@ def _sift_on_pair(fixed, moving, devicetype, verbose=False):
         print('Warning: No matching keypoints found!')
         offset = (0., 0.)
     else:
-        offset = (np.median(match[:, 1].x-match[:, 0].x), np.median(match[:, 1].y-match[:, 0].y))
+        offset = (np.median(match[:, 1].x - match[:, 0].x), np.median(match[:, 1].y - match[:, 0].y))
 
     if verbose:
         print('offset = {}'.format(offset))
@@ -441,7 +470,6 @@ def _sift_on_pair(fixed, moving, devicetype, verbose=False):
 
 
 def _displace_slice(image, offset, result_filepath=None):
-
     image = shift(image, -np.round([offset[1], offset[0]]))
 
     if result_filepath is not None:
@@ -456,7 +484,6 @@ def _register_with_elastix(fixed, moving,
                            name=None,
                            verbose=False
                            ):
-
     if name is not None and verbose:
         print('Elastix align on {}'.format(name))
 
@@ -507,7 +534,7 @@ def amst_align(
         target_folder,
         median_radius=7,
         elastix_params=None,
-        sift_pre_align=True,
+        coarse_alignment='SIFT',
         sift_sigma=None,
         sift_downsample=None,
         n_workers=8,
@@ -517,7 +544,6 @@ def amst_align(
         verbose=False,
         write_intermediates=False
 ):
-
     if not os.path.exists(target_folder):
         os.mkdir(target_folder)
     if write_intermediates:
@@ -539,32 +565,37 @@ def amst_align(
             target_folder=target_folder,
             verbose=verbose
     ):
-
-        if sift_pre_align:
+        if coarse_alignment is not None:
+            if coarse_alignment == 'SIFT':
+                print('Coarse alignment by translation done with SIFT.')
+                _on_pair_func = _sift_on_pair
+            else:
+                print('Coarse alignment by translation done with cross correlation.')
+                _on_pair_func = _xcorr_on_pair
             # Run SIFT align with one thread if computation is performed on the GPU, otherwise multi-threading speeds
             # up the rather slow CPU computation
             if n_workers_sift > 1:
                 with ThreadPoolExecutor(max_workers=n_workers) as tpe:
                     tasks = [
                         tpe.submit(
-                            _sift_on_pair, *(templates_med_smooth[idx], raws_crop_smooth[idx], sift_devicetype, verbose)
+                            _on_pair_func, *(templates_med_smooth[idx], raws_crop_smooth[idx], sift_devicetype, verbose)
                         )
                         if raws_crop[idx] is not None else None
                         for idx in range(len(templates_med))
                     ]
                     offsets = [task.result()
-                               if task is not None else None
-                               for task in tasks]
+                            if task is not None else None
+                            for task in tasks]
             else:
                 offsets = [
-                    _sift_on_pair(templates_med_smooth[idx], raws_crop_smooth[idx], sift_devicetype, verbose)
+                    _on_pair_func(templates_med_smooth[idx], raws_crop_smooth[idx], sift_devicetype, verbose)
                     if raws_crop[idx] is not None else None
                     for idx in range(len(templates_med))
                 ]
             if sift_downsample is not None:
                 offsets = [np.array(offset) * np.array(sift_downsample)
-                           if offset is not None else None
-                           for offset in offsets]
+                        if offset is not None else None
+                        for offset in offsets]
             del templates_med_smooth
             del raws_crop_smooth
 
@@ -579,12 +610,12 @@ def amst_align(
                         for idx in range(len(raws_crop))
                     ]
                     raws_crop = [task.get()
-                                 if task is not None else None
-                                 for task in tasks]
+                                if task is not None else None
+                                for task in tasks]
             else:
                 raws_crop = [_displace_slice(raws_crop[idx], offsets[idx])
-                             if raws_crop[idx] is not None else None
-                             for idx in range(len(raws_crop))]
+                            if raws_crop[idx] is not None else None
+                            for idx in range(len(raws_crop))]
 
         if write_intermediates:
             # Write the sift images in parallel
@@ -600,13 +631,13 @@ def amst_align(
                         for idx in range(len(raws_crop))
                     ]
                     [task.get()
-                     if task is not None else None
-                     for task in tasks]
+                    if task is not None else None
+                    for task in tasks]
             else:
                 [_write_result(os.path.join(target_folder, 'sift', names[idx]), raws_crop[idx])
-                 if raws_crop[idx] is not None else None
-                 for idx in range(len(raws_crop))
-                 ]
+                if raws_crop[idx] is not None else None
+                for idx in range(len(raws_crop))
+                ]
             # Write template images in parallel
             if n_workers > 1:
                 with Pool(processes=n_workers) as p:
@@ -620,13 +651,13 @@ def amst_align(
                         for idx in range(len(raws_crop))
                     ]
                     [task.get()
-                     if task is not None else None
-                     for task in tasks]
+                    if task is not None else None
+                    for task in tasks]
             else:
                 [_write_result(os.path.join(target_folder, 'refs', names[idx]), templates_med[idx])
-                 if raws_crop[idx] is not None else None
-                 for idx in range(len(raws_crop))
-                 ]
+                if raws_crop[idx] is not None else None
+                for idx in range(len(raws_crop))
+                ]
 
         # Register with ELASTIX with one thread, as it is parallelized internally
         raws_crop = [
@@ -652,10 +683,10 @@ def amst_align(
                     for idx in range(len(raws_crop))
                 ]
                 [task.get()
-                 if task is not None else None
-                 for task in tasks]
+                if task is not None else None
+                for task in tasks]
         else:
             [_write_result(os.path.join(target_folder, names[idx]), raws_crop[idx])
-             if raws_crop[idx] is not None else None
-             for idx in range(len(raws_crop))
-             ]
+            if raws_crop[idx] is not None else None
+            for idx in range(len(raws_crop))
+            ]
