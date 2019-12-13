@@ -21,7 +21,7 @@ Clone this repository
     git clone https://github.com/jhennies/amst.git
 
 The AMST package will now reside in /home/user/src/amst. For convenience the following instructions assume this location. 
-In case you cloned the git elsewhere adapt the respective instructions accordingly.
+In case you cloned the git elsewhere adapt the respective folder paths accordingly.
 
 
 ## Installing Miniconda or Anaconda 
@@ -41,7 +41,7 @@ Open a terminal/command line and navigate to the AMST package:
 
     cd /home/user/src/amst 
 
-For Windows, installing the wheel will install the dependencies. Then jump to create environment manually.
+For Windows, jump to create environment manually.
 
 For Linux, type:
 
@@ -62,27 +62,31 @@ Create an new environment:
     
 ##  Installation on Windows
 
-- Starting from the console where you activated your amst_env in conda move to the directory you downloaded amst, then to the directory amst_win 
+- Starting from the console where you activated your amst_env in conda move to the directory where you downloaded amst/amst_win 
+
 - Execute: 
   
     pip install vigranumpy-(press tab to autocomplete)
+
 - Execute:
 
     pip install amst_bin_win-(press tab to autocomplete)
 
-    If pyopencl gives problems (you will see error messages with pyopencl involved), execute:
+    During installation of dependencies, if pyopencl gives problems (you will see error messages with pyopencl involved), execute:
         
         pip install pyopencl-(press tab to autocomplete) 
     
-    Then again:
+    Then again, reinstall the amst wheel:
+
         pip install amst_bin_win-(press tab to autocomplete)
 
     
 - Using a text editor (Notepad,...), open example_usage.py and replace the directories marked as __raw__, __aligned__ and __results__
+
 - Execute :
     python example_usage.py
 
-If everything went well, it will start.
+If everything went well, it will start. If you have any problem with dependencies, check the file amst_env_linux.yml and try to install dependencies manually.
 
 ## Installation on Linux
 
@@ -99,7 +103,7 @@ From the command line install required packages:
 Additionally, check the potential issues specified below. 
 
 
-### Installation of Elastix
+### Installation of Elastix (only Linux)
 
 
 Extract the downloaded archive to a folder of your choice (/path/to/elastix)
@@ -111,13 +115,6 @@ Add the following to the .bashrc:
     
 Replace '/path/to/elastix/' by the correct folder where elastix was imported to and which contains the bin and lib folders.
     
-Likewise, for Windows add
-
-    /path/to/elastix/bin
-    /path/to/elastix/lib
-    
-to the environment variables.
-
 Calling elastix from command line should now work, e.g.:
 
     $ elastix --help
@@ -184,8 +181,8 @@ Settings of the amst algorithm
         # Parameters for the affine transformation step using Elastix; see below for more details
         elastix_params=optimized_elastix_params(),
         
-        # Use SIFT to get the raw data close to the template
-        sift_pre_align=True,     
+        # Use _'SIFT'_ to get the raw data close to the template, use _'XCORR'_ to do it by cross correlation and _None_ if you want to skip this step (not recommended)
+        coarse_alignment='SIFT',     
         
         # Pre-smooth data before running the SIFT
         sift_sigma=1.6,   
@@ -355,10 +352,21 @@ Check line 558 in /path/to/miniconda3/envs/amst_env_devel/lib/python3.6/site-pac
 delete the line.
 
 
-#### 4. Problems with module 'Module not found error'
+### 5. Problems with module 'Module not found error'
 In some occasions is not possible to download a package properly from conda or pip. If that is the case, download the corresponding
 wheel from a different repository. For example, you can use the wheels from Christoph Golke page, for example, for Vigra:
 https://www.lfd.uci.edu/~gohlke/pythonlibs/#vigra
 
 Download the .whl file and then install using pip:
    pip install dowloaded_package.whl
+
+### 6. OUT_OF_RESOURCES error (general)
+
+_pyopencl._cl.RuntimeError: clEnqueueReadBuffer failed: OUT_OF_RESOURCES_
+
+SIFT uses pyopencl to do the alignments. In occasions, when NVIDIA drivers are not compatible or another process is using GPU memory, the process from the silx library fails 
+uploading the kernel and you will get different types of OUT_OF_RESOURCES errors. Once this happens, you have to stop the python kernel (the GPU memory has been corrupted), and in occasions even restart the computer. 
+If after restarting, the error keeps showing, change the coarse_alignment to XCORR (cross correlation). This should solve the problem and the coarse alignment now is done by CPU.
+
+
+
