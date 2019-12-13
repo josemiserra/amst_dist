@@ -6,7 +6,7 @@ class BinaryDistribution(Distribution):
 
 setup(
    name='amst_bin_win',
-   version='0.1.1',
+   version='0.1.2',
    author='Julian Hennies',
    author_email='julian.hennies@embl.de',
    packages= find_packages(),
